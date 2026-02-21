@@ -1,0 +1,118 @@
+# kibana-resource-sync example configuration
+# Use either:
+# - `environments` for environment + region routing (shown below), or
+# - `targets` for legacy region-only routing.
+#
+# Tag contract expected on source dashboards:
+# - Ready=True
+# - Regions=eu,na,selfhost
+# - Environments=staging,prod (required when using `environments` routing)
+
+source:
+  name: dev
+  base_url: https://kibana-dev.example.com
+  space: observability
+
+  # Choose exactly one auth mode per instance.
+  # Token auth (recommended):
+  api_token_env: KIBANA_DEV_TOKEN
+  # Optional fallback from AWS Secrets Manager when token/env is unset:
+  # api_token_secret_id: kibana/dev/source
+  # api_token_secret_key: api_token
+  # Basic auth:
+  # username_env: KIBANA_DEV_USERNAME
+  # password_env: KIBANA_DEV_PASSWORD
+  # Optional fallback from AWS Secrets Manager when username/password envs are unset:
+  # username_secret_id: kibana/dev/source-basic
+  # username_secret_key: username
+  # password_secret_id: kibana/dev/source-basic
+  # password_secret_key: password
+
+# Environment + region routing (preferred for promotions).
+# Destination auth uses the same one-of contract as `source`.
+# (token/basic with optional AWS Secrets Manager fallback fields).
+environments:
+  staging:
+    eu:
+      name: staging-eu
+      base_url: https://kibana-staging-eu.example.com
+      space: observability
+      api_token_env: KIBANA_STAGING_EU_TOKEN
+    na:
+      name: staging-na
+      base_url: https://kibana-staging-na.example.com
+      space: observability
+      api_token_env: KIBANA_STAGING_NA_TOKEN
+    selfhost:
+      name: staging-selfhost
+      base_url: https://kibana-staging-selfhost.internal.example.com
+      space: observability
+      api_token_env: KIBANA_STAGING_SELFHOST_TOKEN
+
+  prod:
+    eu:
+      name: prod-eu
+      base_url: https://kibana-prod-eu.example.com
+      space: observability
+      api_token_env: KIBANA_PROD_EU_TOKEN
+    na:
+      name: prod-na
+      base_url: https://kibana-prod-na.example.com
+      space: observability
+      api_token_env: KIBANA_PROD_NA_TOKEN
+    selfhost:
+      name: prod-selfhost
+      base_url: https://kibana-prod-selfhost.internal.example.com
+      space: observability
+      api_token_env: KIBANA_PROD_SELFHOST_TOKEN
+
+# -----------------------------------------------------------------------------
+# Tag and metadata contract
+# -----------------------------------------------------------------------------
+managed_tag: managed-by=kibana-resource-sync
+source_uid_tag_key: source_uid
+source_stack_tag_key: source_stack
+source_rule_id_tag_key: source_rule_id
+source_hash_tag_key: source_hash
+ready_tag_key: Ready
+ready_tag_value: "True"
+regions_tag_key: Regions
+environments_tag_key: Environments
+dashboard_uid_tag_key: DashboardUID
+
+# -----------------------------------------------------------------------------
+# Sync behavior
+# -----------------------------------------------------------------------------
+reconcile_mode: delete
+# overwrite: always upsert managed resources
+# flag: do not update existing managed resources; emit drift_events
+drift_mode: overwrite
+
+# Oversize import handling:
+# error: fail run when import payload/object exceeds limits
+# chunk: split import into smaller batches (dashboard object imported last)
+# skip: log and skip oversized dashboards
+oversize_policy: chunk
+max_import_payload_bytes: 20971520
+max_saved_object_bytes: 20971520
+
+# -----------------------------------------------------------------------------
+# Data view mapping
+# -----------------------------------------------------------------------------
+data_views:
+  # strict: require explicit mapping (or same ID exists in destination)
+  # assist: attempt title-based auto-match when explicit mapping is missing
+  mode: strict
+  mappings:
+    staging/eu:
+      by_source_id:
+        src-data-view-id-1: dst-data-view-id-a
+      by_source_title:
+        logs-*: dst-data-view-id-b
+
+# -----------------------------------------------------------------------------
+# Runtime tuning
+# -----------------------------------------------------------------------------
+require_rule_ready: false
+page_size: 100
+http_timeout: 30s

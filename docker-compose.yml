@@ -1,0 +1,117 @@
+name: kibana-resource-sync-integration
+
+services:
+  es-src:
+    image: docker.elastic.co/elasticsearch/elasticsearch:${STACK_VERSION:-9.3.0}
+    environment:
+      - node.name=es-src
+      - cluster.name=src-cluster
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - xpack.security.enrollment.enabled=false
+      - xpack.ml.enabled=false
+      - ES_JAVA_OPTS=-Xms512m -Xmx512m
+    ports:
+      - "9200:9200"
+    volumes:
+      - es-src-data:/usr/share/elasticsearch/data
+
+  kibana-src:
+    image: docker.elastic.co/kibana/kibana:${STACK_VERSION:-9.3.0}
+    depends_on:
+      - es-src
+    environment:
+      - SERVER_NAME=kibana-src
+      - ELASTICSEARCH_HOSTS=http://es-src:9200
+      - XPACK_SECURITY_ENABLED=false
+      - XPACK_ENCRYPTEDSAVEDOBJECTS_ENCRYPTIONKEY=localdevlocaldevlocaldevlocaldev
+      - TELEMETRY_ENABLED=false
+      - XPACK_FLEET_ENABLED=false
+    ports:
+      - "5601:5601"
+
+  es-dst:
+    image: docker.elastic.co/elasticsearch/elasticsearch:${STACK_VERSION:-9.3.0}
+    environment:
+      - node.name=es-dst
+      - cluster.name=dst-cluster
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - xpack.security.enrollment.enabled=false
+      - xpack.ml.enabled=false
+      - ES_JAVA_OPTS=-Xms512m -Xmx512m
+    ports:
+      - "9201:9200"
+    volumes:
+      - es-dst-data:/usr/share/elasticsearch/data
+
+  kibana-dst:
+    image: docker.elastic.co/kibana/kibana:${STACK_VERSION:-9.3.0}
+    depends_on:
+      - es-dst
+    environment:
+      - SERVER_NAME=kibana-dst
+      - ELASTICSEARCH_HOSTS=http://es-dst:9200
+      - XPACK_SECURITY_ENABLED=false
+      - XPACK_ENCRYPTEDSAVEDOBJECTS_ENCRYPTIONKEY=localdevlocaldevlocaldevlocaldev
+      - TELEMETRY_ENABLED=false
+      - XPACK_FLEET_ENABLED=false
+    ports:
+      - "5602:5601"
+
+  seed-source:
+    image: curlimages/curl:8.12.1
+    depends_on:
+      - kibana-src
+      - kibana-dst
+    entrypoint: ["/bin/sh", "/scripts/seed-source.sh"]
+    volumes:
+      - ./deploy/integration/scripts/seed-source.sh:/scripts/seed-source.sh:ro
+    environment:
+      - STACK_VERSION=${STACK_VERSION:-9.3.0}
+      - SRC_KIBANA_URL=http://kibana-src:5601
+      - DST_KIBANA_URL=http://kibana-dst:5601
+      - SRC_ES_URL=http://es-src:9200
+      - DST_ES_URL=http://es-dst:9200
+      - DASHBOARD_ID=sync-demo-dashboard
+      - VISUALIZATION_ID=sync-demo-log-levels
+      - SRC_DATA_VIEW_ID=src-logs-data-view
+      - DST_DATA_VIEW_ID=dst-logs-data-view
+      - DATA_VIEW_TITLE=demo-logs-*
+      - INDEX_NAME=demo-logs-2026.02.20
+    restart: "no"
+
+  sync:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    depends_on:
+      seed-source:
+        condition: service_completed_successfully
+    command: ["-config", "/config/config.integration.yaml", "-log-level", "info"]
+    volumes:
+      - ./deploy/integration/config.integration.yaml:/config/config.integration.yaml:ro
+    restart: "no"
+
+  verify:
+    image: curlimages/curl:8.12.1
+    depends_on:
+      sync:
+        condition: service_completed_successfully
+    entrypoint: ["/bin/sh", "/scripts/verify-target.sh"]
+    volumes:
+      - ./deploy/integration/scripts/verify-target.sh:/scripts/verify-target.sh:ro
+    environment:
+      - TARGET_KIBANA_URL=http://kibana-dst:5601
+      - TARGET_ES_URL=http://es-dst:9200
+      - DASHBOARD_ID=sync-demo-dashboard
+      - VISUALIZATION_ID=sync-demo-log-levels
+      - SOURCE_STACK_NAME=dev
+      - TARGET_DATA_VIEW_ID=dst-logs-data-view
+      - SOURCE_DATA_VIEW_ID=src-logs-data-view
+      - TARGET_INDEX_PATTERN=demo-logs-*
+    restart: "no"
+
+volumes:
+  es-src-data:
+  es-dst-data:
