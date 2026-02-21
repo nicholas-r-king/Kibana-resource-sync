@@ -2,6 +2,10 @@
 
 `kibana-resource-sync` is a Golang CLI/CronJob tool that promotes Kibana dashboards and associated alert rules from one source Kibana instance to multiple target instances based on metadata tags.
 
+## Why this exists 
+I created a tool similar to this at a previous job because of our need to promote dashboards between environments without requiring users to manually update them in several places when using several kibana/elasticsearch pairs. It's also a headache to manage dashboards across several instances with disparate data-views and different uids. This tool can be used in either more relaxed environments either via the push model ie: You have access to all your elasticsearch/kibana instances via a shared-services account or central location or with the pull mode and resources are pulled from sanctioned blob storage (s3). I just wanted to share this tool because it was useful for me. 
+
+
 ## What It Does
 
 On each run, the tool:
@@ -23,7 +27,7 @@ On each run, the tool:
 5. Reconciles stale resources in targets when regions or environments are removed:
    - `reconcile_mode=delete` deletes stale dashboards/rules
    - `reconcile_mode=disable` disables stale rules and leaves dashboards in place (Kibana dashboard API does not support dashboard disable)
-6. Adds provenance markers to managed resources:
+6. Adds new tags to managed resources in destinations:
    - `managed-by=kibana-resource-sync`
    - `source_uid=<dashboard_id>`
    - `source_stack=<source_name>`
@@ -35,7 +39,7 @@ On each run, the tool:
 - `drift_mode=overwrite` (default): managed resources are overwritten each run.
 - `drift_mode=flag`: if a managed resource already exists in target, update is skipped and a drift event is logged.
 
-Hash-based skip remains safe for self-healing: when `source_hash` appears to match, the tool also computes a normalized target fingerprint (excluding managed provenance tags). If destination content drifted due manual edits, overwrite is forced in `drift_mode=overwrite`.
+Hash-based skip remains safe for self-healing: when `source_hash` appears to match, the tool also computes a normalized target fingerprint (excluding managed tags). If destination content drifted due manual edits, overwrite is forced in `drift_mode=overwrite`.
 
 This provides the base needed for future bidirectional editing workflows.
 
@@ -67,22 +71,16 @@ Copy and edit `config.example.yaml`.
 Each configured Kibana instance (`source`, `targets.*`, or `environments.*.*`) must use exactly one auth mode:
 
 - Token auth:
-  - primary: `api_token` or `api_token_env`
-  - optional fallback: `api_token_secret_id` and optional `api_token_secret_key`
+  - `api_token` or `api_token_env`
 - Basic auth:
-  - primary: `username` or `username_env`
-  - primary: `password` or `password_env`
-  - optional fallback:
-    - `username_secret_id` and optional `username_secret_key`
-    - `password_secret_id` and optional `password_secret_key`
+  - `username` or `username_env`
+  - `password` or `password_env`
 
 Notes:
 
 - You cannot mix token auth and basic auth on the same instance config.
 - When using basic auth, both username and password are required.
-- `api_token`, `username`, and `password` support `env:VAR_NAME` and `${VAR_NAME}` forms.
-- Resolution precedence per credential is: direct value -> `*_env` -> AWS Secrets Manager fallback.
-- AWS Secrets Manager uses the default AWS SDK credential/region chain.
+- `api_token`, `username`, and `password` also support `env:VAR_NAME` and `${VAR_NAME}` forms.
 
 ### Destination Routing Modes
 
@@ -155,7 +153,7 @@ Optional rule tags:
 - `Regions=...` (otherwise rule inherits dashboard regions)
 - `Environments=...` (otherwise rule inherits dashboard environments)
 
-Fingerprint/provenance key names are configurable, including `source_hash_tag_key` (default `source_hash`).
+Fingerprint/tag key names are configurable, including `source_hash_tag_key` (default `source_hash`).
 
 ## CLI Usage
 
@@ -184,20 +182,7 @@ docker build -t kibana-resource-sync:latest .
 Example manifest: `deploy/cronjob.yaml`
 
 - Mount config as a ConfigMap at `/etc/kibana-resource-sync/config.yaml`
-- Inject tokens via environment variables from Secret
-
-## GitLab Scheduled Pipeline
-
-Example pipeline job: `deploy/gitlab-ci.yml.example`
-
-## Local Integration Test (Docker Compose)
-
-This repository includes a full local integration harness with:
-
-- source test stack: Elasticsearch + Kibana (`es-src` / `kibana-src`)
-- destination test stack: Elasticsearch + Kibana (`es-dst` / `kibana-dst`)
-- tool runner container (`sync`)
-- automatic seed + verify jobs (`seed-source`, `verify`)
+- Inject tokens via environment variables from Secrets
 
 Files:
 
@@ -234,15 +219,15 @@ make COMPOSE="docker compose" compose-test
 
 This command:
 
-1. starts both test Kibana/Elasticsearch clusters
+1. Starts both test Kibana/Elasticsearch clusters
 2. seeds:
    - fake log documents in both Elasticsearch clusters (`demo-logs-*`)
    - source data-view `src-logs-data-view`
    - destination data-view `dst-logs-data-view`
    - source visualization `sync-demo-log-levels` (pie chart of `level.keyword`) using the source data-view
    - source dashboard tagged with `Ready=True`, `Regions=local`, `Environments=staging`, containing the visualization panel and referencing the source data-view
-3. runs `kibana-resource-sync` in-container with mapping `src-logs-data-view -> dst-logs-data-view`
-4. verifies the destination dashboard + visualization reference `dst-logs-data-view` (not `src-logs-data-view`), destination Elasticsearch has queryable docs, and provenance tags exist:
+3. Runs `kibana-resource-sync` in-container with mapping `src-logs-data-view -> dst-logs-data-view`
+4. Verifies the destination dashboard + visualization reference `dst-logs-data-view` (not `src-logs-data-view`), destination Elasticsearch has queryable docs, and tags exist:
    - `managed-by=kibana-resource-sync`
    - `source_uid=<dashboard_id>`
    - `source_stack=dev`
